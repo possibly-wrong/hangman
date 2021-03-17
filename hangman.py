@@ -1,31 +1,59 @@
 from collections import defaultdict, Counter
+from itertools import groupby
 import random
 
-max_misses = 10
-words = []
-with open('words.txt') as f:
-    for line in f:
-        word = line.strip()
-        patterns = defaultdict(tuple)
-        for i, letter in enumerate(word):
-            patterns[letter] += (i,)
-        words.append((word, patterns))
-n = random.choice([len(word) for word, patterns in words])
-possible = [(word, patterns) for word, patterns in words if len(word) == n]
-word = ['-'] * n
-misses = []
-while len(misses) < max_misses and '-' in word:
-    prompt = '{} (missed [{}]), enter guess: '.format(''.join(word).upper(),
-                                                      ''.join(misses))
-    guess = input(prompt).lower()
-    pattern = Counter(patterns[guess]
-                      for word, patterns in possible).most_common(1)[0][0]
-    possible = [(word, patterns)
-                for word, patterns in possible if patterns[guess] == pattern]
-    for i in pattern:
-        word[i] = guess
-    if not pattern:
-        misses.append(guess)
-        print('  No {}, {} misses remaining.'.format(guess.upper(),
-                                                     max_misses - len(misses)))
-print('The word was', possible[0][0].upper())
+def load_dictionary(filename):
+    with open(filename) as f:
+        for line in f:
+            word = line.strip()
+            pattern = defaultdict(tuple)
+            for i, letter in enumerate(word):
+                pattern[letter] += (i,)
+            yield (word, pattern)
+
+def human_guess(prompt, guessed, missed, possible, show):
+    return input(prompt).lower()
+
+def best_guess(prompt, guessed, missed, possible, show):
+    used = set(guessed) | set(missed)
+    guess = Counter(letter for word, pattern in possible for letter in pattern
+                    if pattern[letter] and
+                    letter not in used).most_common(1)[0][0]
+    if show:
+        print('{}{}'.format(prompt, guess))
+    return guess
+
+def play(guesser, max_misses, words, secret, show=True):
+    n = len(secret)
+    guessed = ['-'] * n
+    missed = []
+    possible = [(word, pattern) for word, pattern in words if len(word) == n]
+    while len(missed) < max_misses and '-' in guessed:
+        prompt = '{} (missed [{}]), guess: '.format(''.join(guessed).upper(),
+                                                    ''.join(missed))
+        guess = guesser(prompt, guessed, missed, possible, show)
+
+        # Maximize number of remaining possible words.
+        scores = Counter(pattern[guess] for word, pattern in possible
+                         if '-' in secret or word == secret).most_common()
+
+        # Break ties with fewest new letters (miss if possible).
+        score = min(next(groupby(scores, key=lambda c: c[1]))[1])[0]
+        possible = [(word, pattern) for word, pattern in possible
+                    if pattern[guess] == score]
+        for i in score:
+            guessed[i] = guess
+        if not score:
+            missed.append(guess)
+            if show:
+                print('    No {}, {} misses remaining.'.format(
+                    guess.upper(), max_misses - len(missed)))
+    secret = possible[0][0] if '-' in secret else secret
+    if show:
+        print('The word was', secret.upper())
+    return guessed, missed, secret
+
+if __name__ == '__main__':
+    words = list(load_dictionary('words.txt'))
+    while True:
+        play(human_guess, 10, words, '-' * len(random.choice(words)[0]))
